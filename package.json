@@ -1,0 +1,16 @@
+{
+  "name": "three3D",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "private": true,
+  "scripts": {
+    "build": "browserify /src/js/index.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "three": "^0.125.2"
+  },
+  "devDependencies": {}
+}
