@@ -1,7 +1,9 @@
 var Scene3D;
 
-var camera, scene, renderer;
-var object, mixer;
+var camera, cameraPerspectiveHelper, scene, renderer;
+var object, mixer, controls;
+
+var box, pivot;
 
 var action;
 
@@ -24,40 +26,15 @@ var windowHalfY = window.innerHeight / 2;
 
 var finalRotationY;
 
+var canvasWidth, canvasHeight;
+
 init();
 
 function init(targetDOM, fileSource) {
-    camera = new THREE.PerspectiveCamera(
-        75,
-        window.innerWidth / 2 / window.innerHeight,
-        0.1,
-        10000
-    );
-    camera.position.z = 5;
-    camera.position.y = 2;
 
     scene = new THREE.Scene();
 
-    // lights
-    const hemiLight = new THREE.HemisphereLight(0xffffff, 0xffffff, 3);
-    hemiLight.color.setHSL(0.6, 1, 0.6);
-    hemiLight.groundColor.setHSL(0.095, 1, 0.75);
-    hemiLight.position.set(0, 50, 0);
-    scene.add(hemiLight);
-
-    var light1 = new THREE.DirectionalLight(0xffffff, 3);
-    light1.position.set(0, 0, 5);
-    scene.add(light1);
-
-    var light3 = new THREE.AmbientLight(0x222222);
-    scene.add(light3);
-
-    //load meshz
-    loadingMesh("public/G110-animate.glb");
-
-    // renderer
     renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setSize(window.innerWidth / 2, window.innerHeight);
 
     Scene3D = document.getElementsByClassName("md:w-1/2 px-1 w-full")[1];
     Scene3D.appendChild(renderer.domElement);
@@ -66,10 +43,84 @@ function init(targetDOM, fileSource) {
     Scene3D.addEventListener("touchstart", onDocumentTouchStart, false);
     Scene3D.addEventListener("touchmove", onDocumentTouchMove, false);
 
-    //
+    // renderer
+    canvasWidth = Scene3D.offsetWidth- parseInt(window.getComputedStyle(Scene3D, null).getPropertyValue('padding-left')) * 2;
+
+    setScreenSizeScene(
+        {
+            setSmallScreenScene: function() {
+                canvasHeight = window.innerHeight * 0.5;
+            },
+            setMediumScreenScene: function() {
+                canvasHeight = window.innerHeight * 0.75;
+            },
+            setLargeScreenScenes: function() {
+                canvasHeight = window.innerHeight * 0.65;
+            }
+        }
+    );
+
+    const fov = 70;
+    const aspect = canvasWidth / canvasHeight;  // the canvas default
+    const near = 0.1;
+    const far = 10000;
+
+    camera = new THREE.PerspectiveCamera(fov, aspect, near, far);          
+    
+    setScreenSizeScene(
+        {
+            setSmallScreenScene: function() {
+                camera.fov = 70;
+            },
+            setMediumScreenScene: function() {
+                camera.fov = 110;
+            },
+            setLargeScreenScene: function() {
+                camera.fov = 85;
+            }
+        }
+    );
+
+    camera.position.z = 5;
+    
+    camera.updateProjectionMatrix(); // Updates the camera projection matrix. Must be called after any change of parameters.
+
+    renderer.setSize(canvasWidth, canvasHeight);
+
+    var light1 = new THREE.DirectionalLight(0xffffff, 3);
+    light1.position.set(0, 0, 5);
+    scene.add(light1);
+
+    const light1helper = new THREE.DirectionalLightHelper( light1, 5 );
+    scene.add( light1helper );
+
+    var light3 = new THREE.AmbientLight(0xffffff);
+    scene.add(light3);
+
+    //load meshz
+    loadingMesh("public/G110-animate.glb");
 
     window.addEventListener("resize", onWindowResize, false);
-}
+};
+
+
+function setScreenSizeScene(callbacks) {
+    var md = window.innerWidth < 1280 && window.innerWidth > 768;
+    var lg = window.innerWidth > 998
+    var sm = window.innerWidth < 768
+
+    if (sm && callbacks.setSmallScreenScene) {
+        callbacks.setSmallScreenScene();
+    }
+    else if (md && callbacks.setMediumScreenScene) {
+        callbacks.setMediumScreenScene();
+    } 
+    else if (lg && callbacks.setLargeScreenScene) {
+        callbacks.setLargeScreenScene();
+    } else {
+        canvasHeight = window.innerHeight * 0.65;
+    };
+};
 
 function loadingMesh(modelFilePath) {
     var gltfLoader = new THREE.GLTFLoader();
@@ -81,31 +132,28 @@ function loadingMesh(modelFilePath) {
     gltfLoader.load(
         modelFilePath,
         function (gltf) {
-            console.log(gltf);
             object = gltf.scene;
-            object.position.set(0, 0, 0);
             object.traverse( function( node ) {
-
                 if ( node.isMesh ) { node.castShadow = true; }
-        
             } );
 
-            scene.add(object);
+            resetGeometryVerticesToCenter(object, scene);
 
-            const animations = gltf.animations;
-            console.log(animations);
+            if (gltf.animations.length) {
+                const animations = gltf.animations;
+    
+                mixer = new THREE.AnimationMixer(object);
+    
+                action = mixer.clipAction(animations[0]);
+    
+                action.play();
+            }
 
-            mixer = new THREE.AnimationMixer(object);
-
-            action = mixer.clipAction(animations[0]);
-
-            console.log(action);
-
-            action.play();
-            // walkAction = mixer.clipAction(animations[3]);
-            // runAction = mixer.clipAction(animations[1]);
-
-            // activateAllActions();
+            // Helpers for debug, remove later
+            const axesHelper1 = new THREE.AxesHelper( 5 );
+            const axesHelper2 = new THREE.AxesHelper( 5 );
+            object.add( axesHelper1 );
+            pivot.add(axesHelper2)
 
             animate();
         },
@@ -118,16 +166,49 @@ function loadingMesh(modelFilePath) {
             console.log("An error happened", error);
         }
     );
+};
+
+function resetGeometryVerticesToCenter(object, scene) {
+    // Mesh is not rotating around its center, it is because the geometry vertices are offset from the origin.
+    // Repositioning by a bounding box to define a reasonable center, and then offset the mesh's position like so:
+    box = new THREE.Box3().setFromObject( object );
+    box.getCenter( object.position ); // this re-sets the mesh position
+    object.position.multiplyScalar( - 1 );
+    
+    // Then add the mesh object to a pivot object
+    pivot = new THREE.Group();
+    pivot.add( object );
+
+    scene.add(pivot);
 }
 
 function onWindowResize() {
-    windowHalfX = window.innerWidth / 2 / 2;
+    windowHalfX = window.innerWidth / 2;
     windowHalfY = window.innerHeight / 2;
 
-    camera.aspect = window.innerWidth / 2 / window.innerHeight;
+    canvasWidth = Scene3D.offsetWidth- parseInt(window.getComputedStyle(Scene3D, null).getPropertyValue('padding-left')) * 2;
+    
+    setScreenSizeScene(
+        {
+            setSmallScreenScene: function() {
+                canvasHeight = window.innerHeight * 0.5;
+                camera.fov = 70;
+            },
+            setMediumScreenScene: function() {
+                canvasHeight = window.innerHeight * 0.75;
+                camera.fov = 110;
+            },
+            setLargeScreenScene: function() {
+                canvasHeight = window.innerHeight * 0.65;
+                camera.fov = 85;
+            }
+        }
+    );
+
+    camera.aspect = canvasWidth / canvasHeight;
     camera.updateProjectionMatrix();
 
-    renderer.setSize(window.innerWidth / 2, window.innerHeight);
+    renderer.setSize(canvasWidth, canvasHeight);
 }
 
 //
@@ -141,19 +222,24 @@ function onDocumentMouseDown(event) {
 
     mouseXOnMouseDown = event.clientX - windowHalfX;
     targetRotationOnMouseDownX = targetRotationX;
+    // console.log('mouseXOnMouseDown', mouseXOnMouseDown)
 
     mouseYOnMouseDown = event.clientY - windowHalfY;
     targetRotationOnMouseDownY = targetRotationY;
+    // console.log('mouseYOnMouseDown', mouseYOnMouseDown)
 }
 
 function onDocumentMouseMove(event) {
     mouseX = event.clientX - windowHalfX;
     mouseY = event.clientY - windowHalfY;
-
+    // console.log('targetRotationOnMouseDownY', targetRotationOnMouseDownY)
+    // console.log('mouseY', mouseY)
+    // console.log('mouseYOnMouseDown', mouseYOnMouseDown)
     targetRotationY =
-        targetRotationOnMouseDownY + (mouseY - mouseYOnMouseDown) * 0.02;
+        targetRotationOnMouseDownY + (mouseY - mouseYOnMouseDown) * 0.05;
+    // console.log('targetRotationY', targetRotationY)
     targetRotationX =
-        targetRotationOnMouseDownX + (mouseX - mouseXOnMouseDown) * 0.02;
+        targetRotationOnMouseDownX + (mouseX - mouseXOnMouseDown) * 0.05;
 }
 
 function onDocumentMouseUp(event) {
@@ -200,26 +286,30 @@ function animate() {
 
     const delta = clock.getDelta();
 
-    mixer.update(delta);
+    if (mixer) {
+        mixer.update(delta);
+    }
 
     render();
 }
 
 function render() {
-    if (object) {
+    if (pivot) {
         //horizontal rotation
-        object.rotation.y += (targetRotationX - object.rotation.y) * 0.1;
-
+        pivot.rotation.y += (targetRotationX - pivot.rotation.y) * 0.1;
+        
         //vertical rotation
-        finalRotationY = targetRotationY - object.rotation.x;
+        finalRotationY = targetRotationY - pivot.rotation.x;
 
-        if (object.rotation.x <= 1 && object.rotation.x >= -1) {
-            object.rotation.x += finalRotationY * 0.1;
-        }
-        if (object.rotation.x > 1) {
-            object.rotation.x = 1;
-        } else if (object.rotation.x < -1) {
-            object.rotation.x = -1;
+        if (pivot.rotation.x <= 0.6 && pivot.rotation.x >= -0.2) {
+            pivot.rotation.x += finalRotationY * 0.1;
+        };
+
+        // round up the x, when it goes over limit number
+        if (pivot.rotation.x > 0.6) {
+            pivot.rotation.x = 0.6;
+        } else if (pivot.rotation.x < -0.2) {
+            pivot.rotation.x = -0.2;
         }
     }
 
