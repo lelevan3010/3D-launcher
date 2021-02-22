@@ -4,8 +4,9 @@
 //    Orbit - left mouse / touch: one-finger move
 //    Zoom - middle mouse, or mousewheel / touch: two-finger spread or squish
 //    Pan - right mouse, or left mouse + ctrl/meta/shiftKey, or arrow keys / touch: two-finger move
+import * as THREE from 'three'
 
-THREE.OrbitControls = function ( object, domElement ) {
+export default THREE.OrbitControls = function ( object, domElement ) {
 
 	if ( domElement === undefined ) console.warn( 'THREE.OrbitControls: The second parameter "domElement" is now mandatory.' );
 	if ( domElement === document ) console.error( 'THREE.OrbitControls: "document" should not be used as the target "domElement". Please use "renderer.domElement" instead.' );
@@ -216,6 +217,11 @@ THREE.OrbitControls = function ( object, domElement ) {
 				scope.target.add( panOffset );
 
 			}
+
+			var minPan = new THREE.Vector3( -2, -1, - 2 );
+			var maxPan = new THREE.Vector3( 2, 2, 2 );
+
+			scope.target.clamp( minPan, maxPan );
 
 			offset.setFromSpherical( spherical );
 
